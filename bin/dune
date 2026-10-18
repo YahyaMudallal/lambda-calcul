@@ -1,0 +1,4 @@
+(executable
+ (public_name lambda-calcul)
+ (name main)
+ (libraries lambda_calcul))
