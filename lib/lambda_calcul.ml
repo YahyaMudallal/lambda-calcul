@@ -9,4 +9,4 @@ let pretty_printer = Ast.pretty_printer
 
 let parse = Parser.parse
 
-let alpa_convertion = Ast.alpa_convertion
+let alpha_conversion = Ast.alpha_conversion
