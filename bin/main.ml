@@ -14,3 +14,13 @@ let () =
 
   let term5 = alpha_conversion term4 in
   pretty_printer term5;
+  
+  let term6 = Abs("x", Var("x5")) in
+  pretty_printer term6;
+  
+  let term7 = parse "x" in
+  pretty_printer term7;
+
+  let term8 = substitution term6 term7 "x5" in
+  pretty_printer term8;
+  

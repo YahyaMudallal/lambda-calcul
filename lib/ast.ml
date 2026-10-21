@@ -33,56 +33,86 @@ let pretty_printer (t : term) =
 (* Global counter used to defined non used name for variables *)
 let cpt = ref 0
 
+
+(** 
+  Collect all variables linked and free of a term
+  @param t the term to collect the variables from.
+*)
+let rec collect_all_vars (t : term) : string list =
+  match t with
+  | Var x -> [x]
+  | Abs (x, body) -> x :: collect_all_vars body
+  | App (t1, t2) -> collect_all_vars t1 @ collect_all_vars t2
+
+
+(** 
+  Generate a new fresh variable wich is unique 
+  @param old_var the old varible to rename.  
+*)
+let gen_new_var (old_var : string) (existing_vars : string list): string =
+  let new_var = ref (old_var ^ string_of_int !cpt) in
+  cpt := !cpt + 1;
+  while List.mem !new_var existing_vars do
+    new_var := old_var ^ string_of_int !cpt;
+    cpt := !cpt + 1
+  done;
+  !new_var
+
+(**
+  Rename the linked variables 
+  @param t the term to convert
+  @param env the current environment of linked variables and their new names.
+*)
+let rec convert (t : term) (env : (string * string) list) (existing_vars : string list) : term =
+  match t with
+  | Var x ->
+      (match List.assoc_opt x env with
+        | Some new_x -> Var new_x
+        | None -> Var x)
+  | Abs (x, body) ->
+      let new_var = gen_new_var x existing_vars in
+      let new_env = (x, new_var) :: env in
+      Abs (new_var, convert body new_env existing_vars)
+  | App (t1, t2) ->
+      App (convert t1 env existing_vars, convert t2 env existing_vars)
+
 (**
   Alpha convert the linked variables of the term to respect the convention of barendregt.
   @param t the term to alpha convert.
 *)
 let alpha_conversion (t : term) : term =
-
-  (** 
-    Collect all variables linked and free of a term
-    @param t the term to collect the variables from.
-  *)
-  let rec collect_all_vars (t : term) : string list =
-    match t with
-    | Var x -> [x]
-    | Abs (x, body) -> x :: collect_all_vars body
-    | App (t1, t2) -> collect_all_vars t1 @ collect_all_vars t2
-  in
-
   let existing_vars = collect_all_vars t in
+  convert t [] existing_vars
 
-  (** 
-    Generate a new fresh variable wich is unique 
-    @param old_var the old varible to rename.  
+(**
+  Do the substitution of the variable x in t1 by t2.
+  @param t1 the term to substitute the x variable
+  @param t2 the term to subtitute with
+  @param x the variable to substitute
+  @return the final term
+*)
+let substitution (t1 : term) (t2 : term) (x : string) : term = 
+  
+  (*
+    First alpha convert the term t1 while takin in account the variables of t2 to respectect the convention of barendregt, then substitute the linked varible x in t1 by t2. 
   *)
-  let gen_new_var (old_var : string) : string =
-    let new_var = ref (old_var ^ string_of_int !cpt) in
-    cpt := !cpt + 1;
-    while List.mem !new_var existing_vars do
-      new_var := old_var ^ string_of_int !cpt;
-      cpt := !cpt + 1
-    done;
-    !new_var
+
+  let existing_vars = collect_all_vars t1 @ collect_all_vars t2 in
+
+  let t1_converted = convert t1 [] existing_vars in
+
+  let rec substitue (t1 : term): term =
+    match t1 with 
+    | Var(v) -> 
+      if String.compare x v = 0 then
+        t2
+      else Var(v)
+    | Abs(v, body) -> 
+        if String.compare v x = 0 then
+          Abs(v, body)
+        else Abs(v, substitue body)
+    | App (m, n) -> 
+        App(substitue m, substitue n)
   in
 
-  (**
-    Rename the linked variables 
-    @param t the term to convert
-    @param env the current environment of linked variables and their  
-  *)
-  let rec convert (t : term) (env : (string * string) list) : term =
-    match t with
-    | Var x ->
-        (match List.assoc_opt x env with
-         | Some new_x -> Var new_x
-         | None -> Var x)
-    | Abs (x, body) ->
-        let new_var = gen_new_var x in
-        let new_env = (x, new_var) :: env in
-        Abs (new_var, convert body new_env)
-    | App (t1, t2) ->
-        App (convert t1 env, convert t2 env)
-  in
-
-  convert t []
+  substitue t1_converted
