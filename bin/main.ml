@@ -11,7 +11,7 @@ let () =
 
   let term4 = parse "((@x.x ((@x.x) y)) x (@x.(x y)))" in
   pretty_printer term4;
-
+  
   let term5 = alpha_conversion term4 in
   pretty_printer term5;
   
@@ -23,4 +23,13 @@ let () =
 
   let term8 = substitution term6 term7 "x5" in
   pretty_printer term8;
+
+  print_endline "start reduction of";
+  pretty_printer term4;
+  reduce term4 1000;
   
+  
+  let term9 = parse "(@x.x x) (@x.x x)" in
+  print_endline "start reduction of";
+  pretty_printer term9;
+  reduce term9 5;

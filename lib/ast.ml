@@ -116,3 +116,42 @@ let substitution (t1 : term) (t2 : term) (x : string) : term =
   in
 
   substitue t1_converted
+
+(**
+  Evaluate a lambda term by following the Left-to-Right Call-by-Value strategy.
+  @param t the term to evaluate
+  @return the evaluated term if it can be reducted, None if it can't
+*)
+let rec evaluate (t : term) : term option =
+  match t with
+  (* can't reduce a variable or an abstraction *)
+  | Var _ | Abs _ ->
+      None
+
+  | App (m, n) -> 
+    (* first try to evaluate m (left) *)
+    match evaluate m with
+    | Some m' -> 
+        Some (App (m', n))
+    | None -> 
+      (* then if m can't be reduce try to evaluate n (right) *)
+      match evaluate n with
+      | Some n' -> Some (App (m, n'))
+      | None ->
+        (* m nor n can be reduced then if m an abstraction substitute its body by n *)
+        match m with
+        | App _ | Var _ -> None
+        | Abs (x, body) -> 
+          (* alpha convert n to ensure barendregt convention *)
+          Some (substitution body (alpha_conversion n) x) 
+
+(**
+  Print the reduces of a term consecutively.
+  @param t the term to show the reduction
+  @param max_iteration the maximum number of iteration to avoid infinite loop for non reducable term.
+*)
+let rec reduce (t : term) (max_iteration : int) = 
+  if max_iteration > 0 then
+    match evaluate t with
+    | Some t' -> pretty_printer t'; reduce t' (max_iteration - 1)
+    | None -> ()

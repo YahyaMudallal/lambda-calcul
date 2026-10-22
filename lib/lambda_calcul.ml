@@ -12,3 +12,7 @@ let parse = Parser.parse
 let alpha_conversion = Ast.alpha_conversion
 
 let substitution = Ast.substitution
+
+let evaluate = Ast.evaluate
+
+let reduce = Ast.reduce
