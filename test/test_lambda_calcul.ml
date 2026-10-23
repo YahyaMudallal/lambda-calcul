@@ -11,7 +11,7 @@ let test_to_string () =
 
 (* Parsing Tests *)
 let test_parse_variable () =
-  let expected = Var "x" in
+  let expected : term = Var "x" in
   let real = parse "x" in
   Alcotest.(check term_testable) "Variable simple" expected real
 

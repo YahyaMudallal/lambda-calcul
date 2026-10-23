@@ -28,8 +28,15 @@ let () =
   pretty_printer term4;
   reduce term4 1000;
   
-  
   let term9 = parse "(@x.x x) (@x.x x)" in
   print_endline "start reduction of";
   pretty_printer term9;
   reduce term9 5;
+
+  let type1 : ptype = Var("a") in
+  pretty_printer_ptype type1;
+
+  print_endline "equations for the term";
+  pretty_printer term2;
+  let eqs_term2 : equation list = generate_equation term2 in
+  print_equations_list eqs_term2

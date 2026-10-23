@@ -98,7 +98,7 @@ let rec trouve_but (e : equa_zip) (but : string) =
                      
 (* résout un système d'équations *) 
 let rec unification (e : equa_zip) (but : string) : ptype = 
-  match e with 
+  match e with
     (* on a passé toutes les équations : succes *)
     (_, []) -> (try trouve_but (rembobine e) but with VarPasTrouve -> raise (Echec_unif "but pas trouvé"))
     (* equation avec but : on passe *)
