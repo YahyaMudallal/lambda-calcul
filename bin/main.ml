@@ -39,4 +39,47 @@ let () =
   print_endline "equations for the term";
   pretty_printer term2;
   let eqs_term2 : equation list = generate_equation term2 in
-  print_equations_list eqs_term2
+  print_equations_list eqs_term2;
+
+
+  let test_term (name : string) (raw_term : string) (timeout : int) =
+    print_endline ("=== Test : " ^ name ^ " ===");
+    print_endline ("Terme : " ^ raw_term);
+    try
+      let t = parse raw_term in
+      let substs = type_inference t timeout in
+      print_endline "Succès ! Substitutions trouvées :";
+      print_substitutions substs
+    with
+    | Failure msg -> print_endline ("Échec attendu/obtenu : " ^ msg)
+    | e -> print_endline ("Erreur inattendue : " ^ Printexc.to_string e);
+    print_newline () in
+
+  let timeout = 100 in
+
+  (* 1. L'identité : λx. x *)
+  test_term "Identité (I)" "@x.x" timeout;
+
+  (* 2. Le combinateur K : λx. λy. x *)
+  test_term "Combinateur K" "@x.@y.x" timeout;
+
+  (* 3. Le combinateur K appliqué à une variable muette (Faux booléen) : λx. λy. y *)
+  test_term "Combinateur K' / False" "@x.@y.y" timeout;
+
+  (* 4. Application simple : (λx. x) (λy. y) *)
+  test_term "Application I I" "(@x.x) (@y.y)" timeout;
+
+  (* 5. Double application : (λf. λx. f (f x)) *)
+  test_term "Entier de Church 2" "@f.@x.(f (f x))" timeout;
+
+  (* 6. Terme S K K : typable en λ-calcul simplement typé (équivalent à I) *)
+  test_term "S K K" "(@x.@y.@z.((x z) (y z))) (@x.@y.x) (@x.@y.x)" timeout;
+
+  (* 7. Auto-application non typable : λx. (x x) (doit lever un occur-check) *)
+  test_term "Auto-application Omega_1 (non typable)" "@x.(x x)" timeout;
+
+  (* 8. Combinateur Omega complet : (λx. x x) (λx. x x) *)
+  test_term "Omega (non typable)" "(@x.(x x)) (@x.(x x))" timeout;
+
+  (* 9. Terme S I I I : typable en λ-calcul simplement typé *)
+  test_term "S I I I" "(@x.@y.@z.((x z) (y z))) (@x.x) (@x.x) (@x.x)" timeout;

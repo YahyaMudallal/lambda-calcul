@@ -1,12 +1,13 @@
-(** Definition of a lambda term *)
+(** A term in the untyped lambda calculus. *)
 type term = 
   | Var of string
   | Abs of string * term
   | App of term * term
 
-(** 
-  Return the string of a lambda term
-  @param t lambda term to get the string
+(**
+  Converts a term to a readable string.
+  @param t The term to convert.
+  @return The string representation of [t].
 *)
 let rec to_string (t : term) : string =
   match t with
@@ -23,20 +24,23 @@ let rec to_string (t : term) : string =
       in
       s1 ^ " " ^ s2
 
-(** 
-  Print a lambda term in a human readable format  
-  @param t the lambda term to print
+(**
+  Prints a term followed by a newline.
+  @param t The term to print.
+  @return [unit].
 *)
 let pretty_printer (t : term) =
   print_string (to_string t); print_newline ()
 
-(* Global counter used to defined non used name for variables *)
+(* Global counter used to generate fresh variable names. *)
 let cpt = ref 0
 
 
-(** 
-  Collect all variables linked and free of a term
-  @param t the term to collect the variables from.
+(**
+  Collects the names of all bound and free variables in a term.
+  Duplicate names are retained.
+  @param t The term to inspect.
+  @return The list of variable names encountered.
 *)
 let rec collect_all_vars (t : term) : string list =
   match t with
@@ -45,9 +49,11 @@ let rec collect_all_vars (t : term) : string list =
   | App (t1, t2) -> collect_all_vars t1 @ collect_all_vars t2
 
 
-(** 
-  Generate a new fresh variable wich is unique 
-  @param old_var the old varible to rename.  
+(**
+  Generates a fresh variable name based on an existing name.
+  @param old_var The name used as the new name's prefix.
+  @param existing_vars Names that must not be used.
+  @return A name that is not present in [existing_vars].
 *)
 let gen_new_var (old_var : string) (existing_vars : string list): string =
   let new_var = ref (old_var ^ string_of_int !cpt) in
@@ -59,9 +65,11 @@ let gen_new_var (old_var : string) (existing_vars : string list): string =
   !new_var
 
 (**
-  Rename the linked variables 
-  @param t the term to convert
-  @param env the current environment of linked variables and their new names.
+  Renames bound variables according to the supplied environment.
+  @param t The term to convert.
+  @param env The mapping from original bound names to their new names.
+  @param existing_vars Names to avoid when generating new names.
+  @return The term with its bound variables renamed.
 *)
 let rec convert (t : term) (env : (string * string) list) (existing_vars : string list) : term =
   match t with
@@ -77,24 +85,28 @@ let rec convert (t : term) (env : (string * string) list) (existing_vars : strin
       App (convert t1 env existing_vars, convert t2 env existing_vars)
 
 (**
-  Alpha convert the linked variables of the term to respect the convention of barendregt.
-  @param t the term to alpha convert.
+  Renames bound variables so they are distinct from names already in the term.
+  Free variables are left unchanged.
+  @param t The term to convert.
+  @return A term alpha-equivalent to [t].
 *)
 let alpha_conversion (t : term) : term =
   let existing_vars = collect_all_vars t in
   convert t [] existing_vars
 
 (**
-  Do the substitution of the variable x in t1 by t2.
-  @param t1 the term to substitute the x variable
-  @param t2 the term to subtitute with
-  @param x the variable to substitute
-  @return the final term
+  Substitutes [t2] for the free occurrences of [x] in [t1].
+  Bound variables in [t1] are renamed first to avoid variable capture.
+  @param t1 The term in which to substitute.
+  @param t2 The term to substitute.
+  @param x The name of the variable to replace.
+  @return The term resulting from the substitution.
 *)
 let substitution (t1 : term) (t2 : term) (x : string) : term = 
   
   (*
-    First alpha convert the term t1 while takin in account the variables of t2 to respectect the convention of barendregt, then substitute the linked varible x in t1 by t2. 
+    Rename the bound variables in t1 while avoiding names in t2, then replace
+    the free occurrences of x.
   *)
 
   let existing_vars = collect_all_vars t1 @ collect_all_vars t2 in
@@ -118,37 +130,39 @@ let substitution (t1 : term) (t2 : term) (x : string) : term =
   substitue t1_converted
 
 (**
-  Evaluate a lambda term by following the Left-to-Right Call-by-Value strategy.
-  @param t the term to evaluate
-  @return the evaluated term if it can be reducted, None if it can't
+  Performs at most one left-to-right call-by-value reduction.
+  @param t The term to reduce.
+  @return [Some] of the reduced term, or [None] if no reduction is possible.
 *)
 let rec evaluate (t : term) : term option =
   match t with
-  (* can't reduce a variable or an abstraction *)
+  (* Variables and abstractions cannot be reduced. *)
   | Var _ | Abs _ ->
       None
 
   | App (m, n) -> 
-    (* first try to evaluate m (left) *)
+    (* Try to evaluate the function part first. *)
     match evaluate m with
     | Some m' -> 
         Some (App (m', n))
     | None -> 
-      (* then if m can't be reduce try to evaluate n (right) *)
+      (* If it is irreducible, try to evaluate the argument. *)
       match evaluate n with
       | Some n' -> Some (App (m, n'))
       | None ->
-        (* m nor n can be reduced then if m an abstraction substitute its body by n *)
+        (* Apply the abstraction once both parts are values. *)
         match m with
         | App _ | Var _ -> None
         | Abs (x, body) -> 
-          (* alpha convert n to ensure barendregt convention *)
+          (* Rename bound variables in the argument to avoid capture. *)
           Some (substitution body (alpha_conversion n) x) 
 
 (**
-  Print the reduces of a term consecutively.
-  @param t the term to show the reduction
-  @param max_iteration the maximum number of iteration to avoid infinite loop for non reducable term.
+  Prints successive reductions up to a normal form or the iteration limit.
+  The initial term is not printed.
+  @param t The term whose reductions are printed.
+  @param max_iteration The maximum number of reductions to perform.
+  @return [unit].
 *)
 let rec reduce (t : term) (max_iteration : int) = 
   if max_iteration > 0 then

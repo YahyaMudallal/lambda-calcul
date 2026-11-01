@@ -1,8 +1,6 @@
 open Ast
 
-(**
-  Definition of a token
-*)
+(** A lexical token recognized by the term parser. *)
 type token =
   | LAMBDA
   | DOT
@@ -10,15 +8,19 @@ type token =
   | RPAREN
   | IDENT of string
 
-(** 
-  Check if a character is alphabetic 
-  @param c the character to check
+(**
+  Checks whether a character is an ASCII letter or digit.
+  @param c The character to check.
+  @return [true] if [c] is a letter or digit, and [false] otherwise.
 *)
 let is_alphanum (c : char) : bool = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 
-(** 
-  Tokenise a string into a list of tokens
-  @param s the string to tokenise
+(**
+  Splits a string into lexical tokens.
+  Identifiers contain ASCII letters and digits; only ordinary spaces are ignored.
+  @param s The string to tokenize.
+  @return The tokens in their original order.
+  @raise Failure if the string contains an invalid character.
 *)
 let tokenise (s : string) : token list =
   let n = String.length s - 1 in
@@ -46,15 +48,19 @@ let tokenise (s : string) : token list =
   done; List.rev !tokens
 
 (**
-  Parse a list of tokens into a lambda term
-  @param tokens the list of tokens to parse
+  Parses a token list into a lambda term.
+  @param tokens The tokens to parse.
+  @return The term represented by [tokens].
+  @raise Failure if the input is empty, malformed, or contains trailing tokens.
 *)
 let parse_tokens (tokens : token list) : term =
 
-  (** 
-    Parse an atomic expression
-    @param tokens the list of tokens to parse
-    @param parse_term the function to parse a term
+  (**
+    Parses a variable or a parenthesized expression.
+    @param tokens The tokens to consume.
+    @param parse_term The function used to parse the contents of parentheses.
+    @return The parsed term and the remaining tokens.
+    @raise Failure if the atomic expression is invalid or incomplete.
   *)
   let rec parse_atom 
   (tokens : token list) 
@@ -70,11 +76,12 @@ let parse_tokens (tokens : token list) : term =
           | _ -> failwith "Expected closing parenthesis")
       | _ -> failwith "Not expected" in        
   
-  (** 
-    Parse an application
-    @param t1 the first term of the application
-    @param tokens the list of tokens to parse
-    @param parse_term the function to parse a term
+  (**
+    Extends an application, associating its arguments from left to right.
+    @param t1 The function or partial application parsed so far.
+    @param tokens The remaining tokens.
+    @param parse_term The function used to parse subterms.
+    @return The constructed term and the remaining tokens.
   *)
   let rec parse_application 
     (t1 : term) 
@@ -90,8 +97,10 @@ let parse_tokens (tokens : token list) : term =
       | _ -> (t1, tokens) in
 
   (**
-    Parse a term
-    @param tokens the list of tokens to parse
+    Parses an abstraction or application from the remaining tokens.
+    @param tokens The tokens to parse.
+    @return The parsed term and the remaining tokens.
+    @raise Failure if the expression is incomplete or malformed.
   *)
   let rec parse_term (tokens : token list) : (term * token list) =
     match tokens with
@@ -111,10 +120,11 @@ let parse_tokens (tokens : token list) : term =
   if rest <> [] then failwith "Unexpected tokens after parsing"
   else t  
   
-(** 
-  Parse a string into a lambda term 
-  @param s the string to parse
-  @return the parsed lambda term
+(**
+  Parses a string and constructs the corresponding lambda term.
+  @param s The expression to parse.
+  @return The term represented by [s].
+  @raise Failure if a character is invalid or the expression is malformed.
 *)
 let parse (s : string) : term =
   let tokens = tokenise s in
