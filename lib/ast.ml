@@ -3,6 +3,12 @@ type term =
   | Var of string
   | Abs of string * term
   | App of term * term
+  | Int of int
+  | Add of term * term
+  | Sub of term * term
+  | List of term list
+  | Hd of term
+  | Tl of term
 
 (**
   Converts a term to a readable string.
@@ -23,6 +29,12 @@ let rec to_string (t : term) : string =
         | _ -> to_string t2
       in
       s1 ^ " " ^ s2
+    | Int(n) -> string_of_int n
+    | Add(t1, t2) -> "(" ^ to_string t1 ^ " + " ^ to_string t2 ^ ")"
+    | Sub(t1, t2) -> "(" ^ to_string t1 ^ " - " ^ to_string t2 ^ ")"
+    | List(ts) -> "[" ^ String.concat "; " (List.map to_string ts) ^ "]"
+    | Hd(t) -> "(hd " ^ to_string t ^ ")"
+    | Tl(t) -> "(tl " ^ to_string t ^ ")"
 
 (**
   Prints a term followed by a newline.
@@ -47,6 +59,12 @@ let rec collect_all_vars (t : term) : string list =
   | Var x -> [x]
   | Abs (x, body) -> x :: collect_all_vars body
   | App (t1, t2) -> collect_all_vars t1 @ collect_all_vars t2
+  | Int _ -> []
+  | Add (t1, t2) -> collect_all_vars t1 @ collect_all_vars t2
+  | Sub (t1, t2) -> collect_all_vars t1 @ collect_all_vars t2
+  | List ts -> List.flatten (List.map collect_all_vars ts)
+  | Hd t -> collect_all_vars t
+  | Tl t -> collect_all_vars t
 
 
 (**
@@ -83,6 +101,14 @@ let rec convert (t : term) (env : (string * string) list) (existing_vars : strin
       Abs (new_var, convert body new_env existing_vars)
   | App (t1, t2) ->
       App (convert t1 env existing_vars, convert t2 env existing_vars)
+  | Int n -> Int n
+  | Add (t1, t2) -> 
+      Add (convert t1 env existing_vars, convert t2 env existing_vars)
+  | Sub (t1, t2) -> 
+      Sub (convert t1 env existing_vars, convert t2 env existing_vars)
+  | List ts -> List (List.map (fun t -> convert t env existing_vars) ts)
+  | Hd t -> Hd (convert t env existing_vars)
+  | Tl t -> Tl (convert t env existing_vars)
 
 (**
   Renames bound variables so they are distinct from names already in the term.
@@ -125,9 +151,25 @@ let substitution (t1 : term) (t2 : term) (x : string) : term =
         else Abs(v, substitue body)
     | App (m, n) -> 
         App(substitue m, substitue n)
+    | Int(n) -> Int(n)
+    | Add(m, n) -> Add(substitue m, substitue n)
+    | Sub(m, n) -> Sub(substitue m, substitue n)
+    | List(ts) -> List(List.map substitue ts)
+    | Hd(t) -> Hd(substitue t)
+    | Tl(t) -> Tl(substitue t)
   in
 
   substitue t1_converted
+
+(** 
+  Checks if a term is a value (cannot be reduced further).
+  @param t The term to check.
+  @return [true] if [t] is a value, [false] otherwise.
+*)
+let is_val (t : term) : bool =
+  match t with
+  | Abs _ | Int _ -> true
+  | _ -> false
 
 (**
   Performs at most one left-to-right call-by-value reduction.
@@ -135,27 +177,109 @@ let substitution (t1 : term) (t2 : term) (x : string) : term =
   @return [Some] of the reduced term, or [None] if no reduction is possible.
 *)
 let rec evaluate (t : term) : term option =
-  match t with
-  (* Variables and abstractions cannot be reduced. *)
-  | Var _ | Abs _ ->
-      None
 
-  | App (m, n) -> 
-    (* Try to evaluate the function part first. *)
-    match evaluate m with
-    | Some m' -> 
-        Some (App (m', n))
-    | None -> 
-      (* If it is irreducible, try to evaluate the argument. *)
-      match evaluate n with
-      | Some n' -> Some (App (m, n'))
-      | None ->
-        (* Apply the abstraction once both parts are values. *)
-        match m with
-        | App _ | Var _ -> None
-        | Abs (x, body) -> 
-          (* Rename bound variables in the argument to avoid capture. *)
-          Some (substitution body (alpha_conversion n) x) 
+  (**
+    Reduces a list of terms, returning [None] if no reduction is possible.
+    @param ts The list of terms to reduce.
+    @return [Some] of the reduced list, or [None] if no reduction is possible.
+  *)
+  let rec reduce_list (ts : term list) : term option =
+    match ts with
+    | [] -> None
+    | t :: rest ->
+        if not (is_val t) then
+          (match evaluate t with
+          | Some t' -> Some (List (t' :: rest))
+          | None -> None)
+        else
+          (match reduce_list rest with
+          | Some (List(ts')) -> Some (List (t :: ts'))
+          | None -> None
+          | _ -> failwith "Unexpected pattern in reduce_list")
+  in
+
+  match t with
+  | Var _ | Abs _ | Int _ -> None
+
+  | App (m, n) ->
+      if not (is_val m) then
+        (* try to reduce the left side *)
+        (match evaluate m with
+        | Some m' -> Some (App (m', n))
+        | None -> None)
+      else if not (is_val n) then
+        (* try to reduce the right side *)
+        (match evaluate n with
+        | Some n' -> Some (App (m, n'))
+        | None -> None)
+      else
+        (* Both are values: perform beta-reduction if m is an abstraction *)
+        (match m with
+        | Abs (x, body) -> Some (substitution body n x)
+        | _ -> None)
+
+  | Add (m, n) ->
+      if not (is_val m) then
+        (* try to reduce the left side *)
+        (match evaluate m with
+        | Some m' -> Some (Add (m', n))
+        | None -> None)
+      else if not (is_val n) then
+        (* try to reduce the right side *)
+        (match evaluate n with
+        | Some n' -> Some (Add (m, n'))
+        | None -> None)
+      else
+        (* Both are values : perform addition if both are integers *)
+        (match (m, n) with
+        | (Int a, Int b) -> Some (Int (a + b))
+        | _ -> None)
+
+  | Sub (m, n) ->
+      if not (is_val m) then
+        (* try to reduce the left side *)
+        (match evaluate m with
+        | Some m' -> Some (Sub (m', n))
+        | None -> None)
+      else if not (is_val n) then
+        (* try to reduce the right side *)
+        (match evaluate n with
+        | Some n' -> Some (Sub (m, n'))
+        | None -> None)
+      else
+        (* Both are values : perform subtraction if both are integers *)
+        (match (m, n) with
+        | (Int a, Int b) -> Some (Int (a - b))
+        | _ -> None)
+
+    | List ts ->
+      reduce_list ts
+
+    | Hd t ->
+      if not (is_val t) then
+        (* if t is not a value, try to reduce it *)
+        (match evaluate t with
+        | Some t' -> Some (Hd t')
+        | None -> None)
+      else
+        (* t is a value, so we can reduce the head operation *)
+        (match t with
+        | List (h :: _) -> Some h
+        | List [] -> failwith "Cannot take head of an empty list"
+        | _ -> failwith "Head operation applied to a non-list value")
+
+    | Tl t ->
+      if not (is_val t) then
+        (* if t is not a value, try to reduce it *)
+        (match evaluate t with
+        | Some t' -> Some (Tl t')
+        | None -> None)
+      else
+        (* t is a value, so we can reduce the tail operation *)
+        (match t with
+        | List (_ :: tail) -> Some (List tail)
+        | List [] -> failwith "Cannot take tail of an empty list"
+        | _ -> failwith "Tail operation applied to a non-list value")
 
 (**
   Prints successive reductions up to a normal form or the iteration limit.
