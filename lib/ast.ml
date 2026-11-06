@@ -9,6 +9,11 @@ type term =
   | List of term list
   | Hd of term
   | Tl of term
+  | Cons of term * term
+  | Izte of term * term * term
+  | Iete of term * term * term
+  | Fix of term
+  | Let of string * term * term
 
 (**
   Converts a term to a readable string.
@@ -35,6 +40,11 @@ let rec to_string (t : term) : string =
     | List(ts) -> "[" ^ String.concat "; " (List.map to_string ts) ^ "]"
     | Hd(t) -> "(hd " ^ to_string t ^ ")"
     | Tl(t) -> "(tl " ^ to_string t ^ ")"
+    | Cons(t1, t2) -> "(" ^ to_string t1 ^ " :: " ^ to_string t2 ^ ")"
+    | Izte(t1, t2, t3) -> "(izte " ^ to_string t1 ^ " " ^ to_string t2 ^ " " ^ to_string t3 ^ ")"
+    | Iete(t1, t2, t3) -> "(iete " ^ to_string t1 ^ " " ^ to_string t2 ^ " " ^ to_string t3 ^ ")"
+    | Fix(t) -> "(fix " ^ to_string t ^ ")"
+    | Let(x, t1, t2) -> "(let " ^ x ^ " = " ^ to_string t1 ^ " in " ^ to_string t2 ^ ")"
 
 (**
   Prints a term followed by a newline.
@@ -65,7 +75,11 @@ let rec collect_all_vars (t : term) : string list =
   | List ts -> List.flatten (List.map collect_all_vars ts)
   | Hd t -> collect_all_vars t
   | Tl t -> collect_all_vars t
-
+  | Cons (t1, t2) -> collect_all_vars t1 @ collect_all_vars t2
+  | Izte (t1, t2, t3) -> collect_all_vars t1 @ collect_all_vars t2 @ collect_all_vars t3
+  | Iete (t1, t2, t3) -> collect_all_vars t1 @ collect_all_vars t2 @ collect_all_vars t3
+  | Fix t -> collect_all_vars t
+  | Let (x, t1, t2) -> x :: collect_all_vars t1 @ collect_all_vars t2
 
 (**
   Generates a fresh variable name based on an existing name.
@@ -109,6 +123,16 @@ let rec convert (t : term) (env : (string * string) list) (existing_vars : strin
   | List ts -> List (List.map (fun t -> convert t env existing_vars) ts)
   | Hd t -> Hd (convert t env existing_vars)
   | Tl t -> Tl (convert t env existing_vars)
+  | Cons (t1, t2) -> Cons (convert t1 env existing_vars, convert t2 env existing_vars)
+  | Izte (t1, t2, t3) -> 
+      Izte (convert t1 env existing_vars, convert t2 env existing_vars, convert t3 env existing_vars)
+  | Iete (t1, t2, t3) -> 
+      Iete (convert t1 env existing_vars, convert t2 env existing_vars, convert t3 env existing_vars)
+  | Fix t -> Fix (convert t env existing_vars)
+  | Let (x, t1, t2) ->
+      let new_var = gen_new_var x existing_vars in (* rename the bound variable *)
+      let new_env = (x, new_var) :: env in
+      Let (new_var, convert t1 env existing_vars, convert t2 new_env existing_vars)
 
 (**
   Renames bound variables so they are distinct from names already in the term.
@@ -157,6 +181,15 @@ let substitution (t1 : term) (t2 : term) (x : string) : term =
     | List(ts) -> List(List.map substitue ts)
     | Hd(t) -> Hd(substitue t)
     | Tl(t) -> Tl(substitue t)
+    | Cons(t1, t2) -> Cons(substitue t1, substitue t2)
+    | Izte(t1, t2, t3) -> Izte(substitue t1, substitue t2, substitue t3)
+    | Iete(t1, t2, t3) -> Iete(substitue t1, substitue t2, substitue t3)
+    | Fix(t) -> Fix(substitue t)
+    | Let(v, t1, t2) ->
+        if String.compare v x = 0 then
+          Let(v, substitue t1, t2)  (* do not substitute in t2 since v shadows x *)
+        else
+          Let(v, substitue t1, substitue t2)
   in
 
   substitue t1_converted
@@ -280,6 +313,71 @@ let rec evaluate (t : term) : term option =
         | List (_ :: tail) -> Some (List tail)
         | List [] -> failwith "Cannot take tail of an empty list"
         | _ -> failwith "Tail operation applied to a non-list value")
+
+    | Cons(t1, t2) ->
+      if not (is_val t1) then
+        (* if t1 is not a value, try to reduce it *)
+        (match evaluate t1 with
+        | Some t1' -> Some (Cons(t1', t2))
+        | None -> None)
+      else if not (is_val t2) then
+        (* if t2 is not a value, try to reduce it *)
+        (match evaluate t2 with
+        | Some t2' -> Some (Cons(t1, t2'))
+        | None -> None)
+      else
+        (* Both are values, so we can reduce the cons operation *)
+        (match t2 with
+        | List ts -> Some (List (t1 :: ts))
+        | _ -> failwith "Cons operation applied to a non-list value")
+
+    | Izte(t1, t2, t3) ->
+      if not (is_val t1) then
+        (* if t1 not a value, try to reduce it *)
+        (match evaluate t1 with
+        | Some t1' -> Some (Izte(t1, t2, t3))
+        | None -> None)
+      else
+        (* t1 is a value, we can reduce the izte operation *)
+        (match t1 with
+        | Int 0 -> Some t2  (* 0 go to then *)
+        | Int _ -> Some t3  (* non 0 go to else *)
+        | _ -> failwith "Izte operator applied to a non integer condition")
+
+    | Iete (t1, t2, t3) -> 
+      if not (is_val t1) then
+        (* if t1 not a value, try to reduce it *)
+        (match evaluate t1 with
+        | Some t1' -> Some (Iete(t1, t2, t3))
+        | None -> None)
+      else
+        (* t1 is a value, we can reduce the izte operation *)
+        (match t1 with
+        | List [] -> Some t2  (* empty list go to then *)
+        | List _ -> Some t3  (* non empty list go to else *)
+        | _ -> failwith "Iete operator applied to a non list condition")
+
+    | Fix t ->
+      if not (is_val t) then
+        (* if t is not a value, try to reduce it *)
+        (match evaluate t with
+        | Some t' -> Some (Fix t')
+        | None -> None)
+      else
+        (* t is a value, so we can reduce the fix operation *)
+        (match t with
+        | Abs (x, body) -> Some (substitution body (Fix t) x)
+        | _ -> failwith "Fix operation applied to a non-abstraction value")
+
+    | Let (x, t1, t2) ->
+      if not (is_val t1) then
+        (* if t1 is not a value, try to reduce it *)
+        (match evaluate t1 with
+        | Some t1' -> Some (Let(x, t1', t2))
+        | None -> None)
+      else
+        (* t1 is a value, so we can reduce the let operation *)
+        Some (substitution t2 t1 x)
 
 (**
   Prints successive reductions up to a normal form or the iteration limit.
