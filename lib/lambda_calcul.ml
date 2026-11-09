@@ -3,6 +3,17 @@ type term = Ast.term =
   | Var of string
   | Abs of string * term
   | App of term * term
+  | Int of int
+  | Add of term * term
+  | Sub of term * term
+  | List of term list
+  | Hd of term
+  | Tl of term
+  | Cons of term * term
+  | Izte of term * term * term
+  | Iete of term * term * term
+  | Fix of term
+  | Let of string * term * term
 
 (**
   Converts a term to a readable string.

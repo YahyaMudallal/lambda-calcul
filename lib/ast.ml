@@ -199,9 +199,10 @@ let substitution (t1 : term) (t2 : term) (x : string) : term =
   @param t The term to check.
   @return [true] if [t] is a value, [false] otherwise.
 *)
-let is_val (t : term) : bool =
+let rec is_val (t : term) : bool =
   match t with
   | Abs _ | Int _ -> true
+  | List ts -> List.for_all is_val ts
   | _ -> false
 
 (**
