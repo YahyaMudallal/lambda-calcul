@@ -117,9 +117,11 @@ let generalize_type (t : ptype) (env : (string * ptype) list) : ptype =
 *)
 let rec check_occur (v : string) (t : ptype) : bool = 
   match t with
-  | Var (x) when x = v -> true
+  | Var (x) -> x = v
   | Arr(t1, t2) -> (check_occur v t1) || (check_occur v t2)
-  | _ -> false
+  | List t' -> check_occur v t'
+  | Forall (x, body) -> if x = v then false else check_occur v body
+  | N -> false
 
 (**
   Replaces every occurrence of a type variable in a type.
@@ -128,28 +130,96 @@ let rec check_occur (v : string) (t : ptype) : bool =
   @param t2 The replacement type.
   @return The resulting type.
 *)
-let rec subsitute_type (t1 : ptype) (v : string) (t2 : ptype) : ptype =
+let rec substitute_type (t1 : ptype) (v : string) (t2 : ptype) : ptype =
   match t1 with
   | Var (x) when x = v -> t2
   | Arr (tg, td) -> 
-      Arr(
-        subsitute_type tg v t2, 
-        subsitute_type td v t2)
+      Arr(substitute_type tg v t2, substitute_type td v t2)
+  | List tl -> List (substitute_type tl v t2)
+  | Forall (x, body) ->
+    if x = v then
+      Forall (x, body)
+    else
+      Forall (x, substitute_type body v t2)
   | _ -> t1
 
-(** 
-  Instantiates a type by replacing its bound type variables with fresh ones.
-  @param t The type to instantiate.
-  @return The instantiated type.
-*)
-let rec instantiate (t : ptype) : ptype =
+let rec generate_equation_aux
+    (t : term)
+    (env : (string * ptype) list)
+    (tc : ptype) : equation list =
   match t with
-  | Forall (x, body) ->
-      let fresh = Var (gen_new_type ()) in
-      let body' = subsitute_type body x fresh in
-      instantiate body'
-  | other -> other
+  | Var v ->
+      (match List.assoc_opt v env with
+      | Some tv -> [(tv, tc)]
+      | None -> failwith ("Free variable not typable : " ^ v))
 
+  | Abs (x, body) ->
+      let t_a = Var (gen_new_type ()) in
+      let t_r = Var (gen_new_type ()) in
+      (tc, Arr (t_a, t_r)) :: generate_equation_aux body ((x, t_a) :: env) t_r
+
+  | App (m, n) ->
+      let t_a = Var (gen_new_type ()) in
+      let eqs_m = generate_equation_aux m env (Arr (t_a, tc)) in
+      let eqs_n = generate_equation_aux n env t_a in
+      eqs_m @ eqs_n
+
+  | Int _ ->
+      [(tc, N)]
+
+  | Add (m, n) | Sub (m, n) ->
+      let eqs_m = generate_equation_aux m env N in
+      let eqs_n = generate_equation_aux n env N in
+      (tc, N) :: (eqs_m @ eqs_n)
+
+  | List ts ->
+      let t_elem = Var (gen_new_type ()) in
+      let eqs = List.concat_map (fun t_i -> generate_equation_aux t_i env t_elem) ts in
+      (tc, List t_elem) :: eqs
+
+  | Hd t_list ->
+      let t_elem = Var (gen_new_type ()) in
+      let eqs_list = generate_equation_aux t_list env (List t_elem) in
+      (tc, t_elem) :: eqs_list
+
+  | Tl t_list ->
+      let t_elem = Var (gen_new_type ()) in
+      let eqs_list = generate_equation_aux t_list env (List t_elem) in
+      (tc, List t_elem) :: eqs_list
+
+  | Cons (head, tail) ->
+      let t_elem = Var (gen_new_type ()) in
+      let eqs_head = generate_equation_aux head env t_elem in
+      let eqs_tail = generate_equation_aux tail env (List t_elem) in
+      (tc, List t_elem) :: (eqs_head @ eqs_tail)
+
+  | Izte (cond, t_then, t_else) ->
+      let eqs_cond = generate_equation_aux cond env N in
+      let eqs_then = generate_equation_aux t_then env tc in
+      let eqs_else = generate_equation_aux t_else env tc in
+      eqs_cond @ eqs_then @ eqs_else
+
+  | Iete (cond, t_then, t_else) ->
+      let t_elem = Var (gen_new_type ()) in
+      let eqs_cond = generate_equation_aux cond env (List t_elem) in
+      let eqs_then = generate_equation_aux t_then env tc in
+      let eqs_else = generate_equation_aux t_else env tc in
+      eqs_cond @ eqs_then @ eqs_else
+
+  | Fix t_fix ->
+      let t_a = Var (gen_new_type ()) in
+      let eqs_t = generate_equation_aux t_fix env (Arr (t_a, t_a)) in
+      (tc, t_a) :: eqs_t
+
+  | Let (x, t1, t2) ->
+      (* infer t1 type and substitutions *)
+      let (ty_t1, subst_t1) = infer_term_type t1 env 1000 in
+      (* update environment with new constraints *)
+      let updated_env = apply_subst_env subst_t1 env in
+      (* generalize the type of t1 in the updated environment *)
+      let gen_ty = generalize_type ty_t1 updated_env in
+      (* type t2 in the updated environment *)
+      generate_equation_aux t2 ((x, gen_ty) :: updated_env) tc
 
 (**
   Generates the type equations for a term.
@@ -157,142 +227,46 @@ let rec instantiate (t : ptype) : ptype =
   @return The equations to solve in order to determine its type.
   @raise Failure if the term contains a free variable.
 *)
-let rec generate_equation (t : term) : equation list =
-  let rec aux 
-      (t : term) 
-      (env : (string * ptype) list) 
-      (tc : ptype) : equation list =
-    match t with
-    | Var v ->
-        (match List.assoc_opt v env with
-        | Some tv ->
-            (* If tv is a polymorphic scheme, instantiate it. *)
-            [(instantiate tv, tc)]
-        | None -> failwith ("Free variable not typable : " ^ v))
+and generate_equation (t : term) : equation list =
+  generate_equation_aux t [] (Var (gen_new_type ()))
 
-    | Abs (x, body) ->
-        let t_a = Var (gen_new_type ()) in
-        let t_r = Var (gen_new_type ()) in
-        (tc, Arr (t_a, t_r)) :: aux body ((x, t_a) :: env) t_r
+(** 
+  Apply a substitution list to a type. 
+  @param subst The substitution list, where each element is a pair of a type variable and its replacement type.
+  @param t The type to which the substitutions will be applied.
+  @return The type after applying all substitutions.
+*)
+and apply_subst (subst : (string * ptype) list) (t : ptype) : ptype =
+  List.fold_left (fun acc (v, rep) -> substitute_type acc v rep) t subst
 
-    | App (m, n) ->
-        let t_a = Var (gen_new_type ()) in
-        let eqs_m = aux m env (Arr (t_a, tc)) in
-        let eqs_n = aux n env t_a in
-        eqs_m @ eqs_n
+(** 
+  Apply a substitution list to all types in an environment.
+  @param subst The substitution list, where each element is a pair of a type variable and its replacement type.
+  @param env The typing environment, which is a list of pairs of variable names and their corresponding types.
+  @return The environment after applying all substitutions to the types.
+*)
+and apply_subst_env (subst : (string * ptype) list) (env : (string * ptype) list) : (string * ptype) list =
+  List.map (fun (x, ty) -> (x, apply_subst subst ty)) env
 
-    | Int _ ->
-        [(tc, N)]
 
-    | Add (m, n) | Sub (m, n) ->
-        let eqs_m = aux m env N in
-        let eqs_n = aux n env N in
-        (tc, N) :: (eqs_m @ eqs_n)
-
-    | List ts ->
-        let t_elem = Var (gen_new_type ()) in
-        let eqs = List.concat_map (fun t_i -> aux t_i env t_elem) ts in
-        (tc, List t_elem) :: eqs
-
-    | Hd t_list ->
-        let t_elem = Var (gen_new_type ()) in
-        let eqs_list = aux t_list env (List t_elem) in
-        (tc, t_elem) :: eqs_list
-
-    | Tl t_list ->
-        let t_elem = Var (gen_new_type ()) in
-        let eqs_list = aux t_list env (List t_elem) in
-        (tc, List t_elem) :: eqs_list
-
-    | Cons (head, tail) ->
-        let t_elem = Var (gen_new_type ()) in
-        let eqs_head = aux head env t_elem in
-        let eqs_tail = aux tail env (List t_elem) in
-        (tc, List t_elem) :: (eqs_head @ eqs_tail)
-
-    | Izte (cond, t_then, t_else) ->
-        let eqs_cond = aux cond env N in
-        let eqs_then = aux t_then env tc in
-        let eqs_else = aux t_else env tc in
-        eqs_cond @ eqs_then @ eqs_else
-
-    | Iete (cond, t_then, t_else) ->
-        let t_elem = Var (gen_new_type ()) in
-        let eqs_cond = aux cond env (List t_elem) in
-        let eqs_then = aux t_then env tc in
-        let eqs_else = aux t_else env tc in
-        eqs_cond @ eqs_then @ eqs_else
-
-    | Fix t_fix ->
-        let t_a = Var (gen_new_type ()) in
-        let eqs_t = aux t_fix env (Arr (t_a, t_a)) in
-        (tc, t_a) :: eqs_t
-
-    | Let (x, t1, t2) ->
-        let ty_t1 = infer_term_type t1 env 1000 in
-        let gen_ty = generalize_type ty_t1 env in
-        aux t2 ((x, gen_ty) :: env) tc
-  in
-  aux t [] (Var (gen_new_type ()))
-
-and infer_term_type 
-    (t : term) 
-    (env : (string * ptype) list) 
-    (timeout : int) : ptype =
+(**
+  Infers the type of a term in a given environment.
+  @param t The term whose type is to be inferred.
+  @param env The typing environment mapping variable names to types.
+  @param timeout The maximum number of unification steps allowed.
+  @return The inferred type of [t].
+  @raise Failure if the limit is reached, the occurs check fails, or the types
+         cannot be unified.
+*)
+and infer_term_type
+    (t : term)
+    (env : (string * ptype) list)
+    (timeout : int) : ptype * (string * ptype) list =
   let alpha = Var (gen_new_type ()) in
-  let rec aux (t : term) (env : (string * ptype) list) (tc : ptype) : equation list =
-    match t with
-    | Var v ->
-        (match List.assoc_opt v env with
-        | Some tv -> [(instantiate tv, tc)]
-        | None -> failwith ("Free var: " ^ v))
-
-    | Abs (x, body) ->
-        let t_a = Var (gen_new_type ()) in
-        let t_r = Var (gen_new_type ()) in
-        (tc, Arr (t_a, t_r)) :: aux body ((x, t_a) :: env) t_r
-
-    | App (m, n) ->
-        let t_a = Var (gen_new_type ()) in
-        (aux m env (Arr (t_a, tc))) @ (aux n env t_a)
-
-    | Int _ -> [(tc, N)]
-    | Add (m, n) | Sub (m, n) -> (tc, N) :: (aux m env N @ aux n env N)
-
-    | List ts ->
-        let t_elem = Var (gen_new_type ()) in
-        (tc, List t_elem) :: List.concat_map (fun ti -> aux ti env t_elem) ts
-
-    | Hd tl ->
-        let t_elem = Var (gen_new_type ()) in
-        (tc, t_elem) :: aux tl env (List t_elem)
-
-    | Tl tl ->
-        let t_elem = Var (gen_new_type ()) in
-        (tc, List t_elem) :: aux tl env (List t_elem)
-
-    | Cons (h, tl) ->
-        let t_elem = Var (gen_new_type ()) in
-        (tc, List t_elem) :: (aux h env t_elem @ aux tl env (List t_elem))
-
-    | Izte (c, th, el) -> aux c env N @ aux th env tc @ aux el env tc
-
-    | Iete (c, th, el) ->
-        let t_elem = Var (gen_new_type ()) in
-        aux c env (List t_elem) @ aux th env tc @ aux el env tc
-
-    | Fix f ->
-        let t_a = Var (gen_new_type ()) in
-        (tc, t_a) :: aux f env (Arr (t_a, t_a))
-
-    | Let (x, e1, e2) ->
-        let ty_e1 = infer_term_type e1 env timeout in
-        let gen_ty = generalize_type ty_e1 env in
-        aux e2 ((x, gen_ty) :: env) tc
-  in
-  let eqs = aux t env alpha in
+  let eqs = generate_equation_aux t env alpha in
   let subst = solve_system eqs timeout in
-  List.fold_left (fun acc (v, ty) -> subsitute_type acc v ty) alpha subst
+  let resolved_alpha = apply_subst subst alpha in
+  (resolved_alpha, subst)
 
 
 (**
@@ -302,45 +276,55 @@ and infer_term_type
   @param t The replacement type.
   @return The transformed equation system.
 *)
-and subsitute_equation_system (eqs : equation list) (v : string) (t : ptype) : equation list =
+and substitute_equation_system (eqs : equation list) (v : string) (t : ptype) : equation list =
   match eqs with
   | [] -> []
   | (t1, t2)::q -> 
-    ((subsitute_type t1 v t), (subsitute_type t2 v t)) :: subsitute_equation_system q v t 
+    ((substitute_type t1 v t), (substitute_type t2 v t)) :: substitute_equation_system q v t 
 
 
 (**
   Processes the first equation in a type-equation system.
-  Equal types are discarded, variable equations are substituted, and two
-  function types are decomposed into their domains and codomains.
+  Returns the substitution (if any) and the remaining system. Equal types are
+  discarded, variable equations are substituted, and function types are
+  decomposed into their domains and codomains.
   @param eqs The equation system to reduce.
-  @return The remaining equation system after one step.
+  @return A substitution and the remaining equation system after one step.
   @raise Failure if the occurs check fails.
 *)
-and unification_step (eqs : equation list) : equation list =
+and unification_step
+    (eqs : equation list) : (string * ptype) option * equation list =
   match eqs with
-  | [] -> []
+  | [] -> None, []
   | (t1, t2) :: q ->
       (* Discard equations whose two sides are already equal. *)
       if t1 = t2 then
-        q
+        None, q
       else
         match (t1, t2) with
+        (* When one side is a forall type, rename its bound variable 
+        and keep the eqation without the forall *)
+        | Forall (x, body), t2 | t2, Forall (x, body) ->
+            let fresh_var = gen_new_type () in
+            let renamed_body = substitute_type body x (Var fresh_var) in
+            None, (renamed_body, t2) :: q
+
         (* Substitute a type variable when possible. *)
-        | Var x, td ->
+        | Var x, td | td, Var x ->
             if check_occur x td then
               failwith ("Occur-check failed: " ^ x ^ " occurs in type")
             else
-              subsitute_equation_system q x td
-        | td, Var x ->
-            if check_occur x td then
-              failwith ("Occur-check failed: " ^ x ^ " occurs in type")
-            else
-              subsitute_equation_system q x td
+              Some (x, td), substitute_equation_system q x td
         (* Decompose two function types. *)
         | Arr (tga, tgr), Arr (tda, tdr) ->
-            (tga, tda) :: (tgr, tdr) :: q
-        | _ -> failwith "Not implemented yet"
+            None, (tga, tda) :: (tgr, tdr) :: q
+        
+        (* When both sides are list types, equate their elements types *)
+        | List t1_elem, List t2_elem ->
+            None, (t1_elem, t2_elem) :: q
+
+        | _ ->
+            failwith ("Cannot unify " ^ to_string_ptype t1 ^ " with " ^ to_string_ptype t2)
 
 (**
   Solves a type-equation system by unification.
@@ -351,45 +335,34 @@ and unification_step (eqs : equation list) : equation list =
          cannot be unified.
 *)
 and solve_system (eqs : equation list) (timeout : int) : (string * ptype) list =
-  if timeout <= 0 then
-    failwith "Timeout exceeded during unification"
-  else
-    match eqs with
-    | [] -> []
-    | (t1, t2) :: q ->
-        if t1 = t2 then
-          solve_system q (timeout - 1)
-        else
-          match (t1, t2) with
-          | Var x, td | td, Var x ->
-              if check_occur x td then
-                failwith ("Occur-check failed on variable: " ^ x)
-              else
-                (* Apply the substitution to the remaining equations. *)
-                let remaining_eqs = subsitute_equation_system q x td in
-                (* Solve the reduced system. *)
-                let subst = solve_system remaining_eqs (timeout - 1) in
-                (* Resolve the replacement type and record the substitution. *)
-                let td_resolved = List.fold_left (fun acc (v, t) -> subsitute_type acc v t) td subst in
-                (x, td_resolved) :: subst
-
-          | Arr (tga, tgr), Arr (tda, tdr) ->
-              solve_system ((tga, tda) :: (tgr, tdr) :: q) (timeout - 1)
-          | _ -> failwith "Not implemented yet"
+  match eqs with
+  | [] -> []
+  | _ when timeout <= 0 -> failwith "Timeout exceeded during unification"
+  | _ ->
+      let step_substitution, remaining_eqs = unification_step eqs in
+      let substitutions = solve_system remaining_eqs (timeout - 1) in
+      match step_substitution with
+      | None -> substitutions
+      | Some (variable, ty) ->
+          let resolved_ty =
+            List.fold_left
+              (fun acc (v, replacement) -> substitute_type acc v replacement)
+              ty substitutions
+          in
+          (variable, resolved_ty) :: substitutions
 
 
-
-(** Infers the types of variables in a lambda term.
-  @param t The lambda term to infer types for.
+(**
+  Infers the type of a lambda term.
+  @param t The lambda term to infer the type for.
   @param timeout The maximum number of unification steps allowed.
-  @return A list of type substitutions for the variables in the term.
+  @return The inferred type of the term.
   @raise Failure if the limit is reached, the occurs check fails, or the types
          cannot be unified.
 *)
-and type_inference (t : term) (timeout : int) : (string * ptype) list =
-  let eqs = generate_equation t in
-  solve_system eqs timeout
-
+and infer_type (t : term) (timeout : int) : ptype =
+  let (ty, _) = infer_term_type t [] timeout in
+  generalize_type ty []
 
 (** Prints a list of type substitutions.
   @param subs The substitutions to print.

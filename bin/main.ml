@@ -47,9 +47,9 @@ let () =
     print_endline ("Terme : " ^ raw_term);
     try
       let t = parse raw_term in
-      let substs = type_inference t timeout in
-      print_endline "Succès ! Substitutions trouvées :";
-      print_substitutions substs
+      let ty = infer_type t timeout in
+      print_endline "Succès ! Type inféré :";
+      pretty_printer_ptype ty
     with
     | Failure msg -> print_endline ("Échec attendu/obtenu : " ^ msg)
     | e -> print_endline ("Erreur inattendue : " ^ Printexc.to_string e);

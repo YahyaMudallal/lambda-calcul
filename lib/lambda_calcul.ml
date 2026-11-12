@@ -72,6 +72,9 @@ let reduce = Ast.reduce
 type ptype = Ptype.ptype =
     Var of string
   | Arr of ptype * ptype
+  | N
+  | List of ptype
+  | Forall of string * ptype
 
 (**
   Converts a type to a string.
@@ -132,14 +135,15 @@ let unification_step = Ptype.unification_step
 *)
 let solve_system = Ptype.solve_system
 
-(** Infers the types of variables in a lambda term.
-  @param t The lambda term to infer types for.
+(**
+  Infers the type of a lambda term.
+  @param t The lambda term to infer the type for.
   @param timeout The maximum number of unification steps allowed.
-  @return A list of type substitutions for the variables in the term.
+  @return The inferred type of the term.
   @raise Failure if the limit is reached, the occurs check fails, or the types
          cannot be unified.
 *)
-let type_inference = Ptype.type_inference
+let infer_type = Ptype.infer_type
 
 (** Prints a list of type substitutions.
   @param subs The substitutions to print.
