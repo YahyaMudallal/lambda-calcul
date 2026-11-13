@@ -14,6 +14,9 @@ type term =
   | Iete of term * term * term
   | Fix of term
   | Let of string * term * term
+  | Deref of term
+  | Ref of term
+  | Assign of term * term
 
 (**
   Converts a term to a readable string.
@@ -45,6 +48,9 @@ let rec to_string (t : term) : string =
     | Iete(t1, t2, t3) -> "(iete " ^ to_string t1 ^ " " ^ to_string t2 ^ " " ^ to_string t3 ^ ")"
     | Fix(t) -> "(fix " ^ to_string t ^ ")"
     | Let(x, t1, t2) -> "(let " ^ x ^ " = " ^ to_string t1 ^ " in " ^ to_string t2 ^ ")"
+    | Deref(t) -> "(!" ^ to_string t ^ ")"
+    | Ref(t) -> "(ref " ^ to_string t ^ ")"
+    | Assign(t1, t2) -> "(" ^ to_string t1 ^ " := " ^ to_string t2 ^ ")"
 
 (**
   Prints a term followed by a newline.
@@ -80,6 +86,9 @@ let rec collect_all_vars (t : term) : string list =
   | Iete (t1, t2, t3) -> collect_all_vars t1 @ collect_all_vars t2 @ collect_all_vars t3
   | Fix t -> collect_all_vars t
   | Let (x, t1, t2) -> x :: collect_all_vars t1 @ collect_all_vars t2
+  | Deref t -> collect_all_vars t
+  | Ref t -> collect_all_vars t
+  | Assign (t1, t2) -> collect_all_vars t1 @ collect_all_vars t2
 
 (**
   Generates a fresh variable name based on an existing name.
@@ -133,6 +142,9 @@ let rec convert (t : term) (env : (string * string) list) (existing_vars : strin
       let new_var = gen_new_var x existing_vars in (* rename the bound variable *)
       let new_env = (x, new_var) :: env in
       Let (new_var, convert t1 env existing_vars, convert t2 new_env existing_vars)
+  | Deref t -> Deref (convert t env existing_vars)
+  | Ref t -> Ref (convert t env existing_vars)
+  | Assign (t1, t2) -> Assign (convert t1 env existing_vars, convert t2 env existing_vars)
 
 (**
   Renames bound variables so they are distinct from names already in the term.
@@ -190,6 +202,9 @@ let substitution (t1 : term) (t2 : term) (x : string) : term =
           Let(v, substitue t1, t2)  (* do not substitute in t2 since v shadows x *)
         else
           Let(v, substitue t1, substitue t2)
+    | Deref(t) -> Deref(substitue t)
+    | Ref(t) -> Ref(substitue t)
+    | Assign(t1, t2) -> Assign(substitue t1, substitue t2)
   in
 
   substitue t1_converted
@@ -203,6 +218,7 @@ let rec is_val (t : term) : bool =
   match t with
   | Abs _ | Int _ -> true
   | List ts -> List.for_all is_val ts
+  | Deref _ | Ref _ | Assign _ -> true
   | _ -> false
 
 (**
@@ -379,6 +395,8 @@ let rec evaluate (t : term) : term option =
       else
         (* t1 is a value, so we can reduce the let operation *)
         Some (substitution t2 t1 x)
+
+    | _ -> failwith "Evaluation not implemented for this term"
 
 (**
   Prints successive reductions up to a normal form or the iteration limit.
