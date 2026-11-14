@@ -14,6 +14,11 @@ type term = Ast.term =
   | Iete of term * term * term
   | Fix of term
   | Let of string * term * term
+  | Deref of term
+  | Ref of term
+  | Assign of term * term
+  | Region of string
+  | Unit
 
 (**
   Converts a term to a readable string.
@@ -75,6 +80,8 @@ type ptype = Ptype.ptype =
   | N
   | List of ptype
   | Forall of string * ptype
+  | Unit
+  | Ref of ptype
 
 (**
   Converts a type to a string.

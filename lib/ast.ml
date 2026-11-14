@@ -17,6 +17,8 @@ type term =
   | Deref of term
   | Ref of term
   | Assign of term * term
+  | Region of string
+  | Unit
 
 (**
   Converts a term to a readable string.
@@ -51,6 +53,8 @@ let rec to_string (t : term) : string =
     | Deref(t) -> "(!" ^ to_string t ^ ")"
     | Ref(t) -> "(ref " ^ to_string t ^ ")"
     | Assign(t1, t2) -> "(" ^ to_string t1 ^ " := " ^ to_string t2 ^ ")"
+    | Region(r) -> "(region " ^ r ^ ")"
+    | Unit -> "(unit)"
 
 (**
   Prints a term followed by a newline.
@@ -89,6 +93,8 @@ let rec collect_all_vars (t : term) : string list =
   | Deref t -> collect_all_vars t
   | Ref t -> collect_all_vars t
   | Assign (t1, t2) -> collect_all_vars t1 @ collect_all_vars t2
+  | Region _ -> []
+  | Unit -> []
 
 (**
   Generates a fresh variable name based on an existing name.
@@ -145,6 +151,8 @@ let rec convert (t : term) (env : (string * string) list) (existing_vars : strin
   | Deref t -> Deref (convert t env existing_vars)
   | Ref t -> Ref (convert t env existing_vars)
   | Assign (t1, t2) -> Assign (convert t1 env existing_vars, convert t2 env existing_vars)
+  | Region r -> Region r
+  | Unit -> Unit
 
 (**
   Renames bound variables so they are distinct from names already in the term.
@@ -205,9 +213,29 @@ let substitution (t1 : term) (t2 : term) (x : string) : term =
     | Deref(t) -> Deref(substitue t)
     | Ref(t) -> Ref(substitue t)
     | Assign(t1, t2) -> Assign(substitue t1, substitue t2)
+    | Region(r) -> Region(r)
+    | Unit -> Unit
   in
 
   substitue t1_converted
+
+let regions : (string * term) list ref = ref []
+
+let region_counter = ref 0
+
+(** 
+  Generates a new unique region name. 
+  @param current_memory The current memory state, used to avoid name collisions.
+  @return A new unique region name.
+*)
+let new_region (current_memory : (string * term) list) : string =
+  let new_region_name = ref ("r" ^ string_of_int !region_counter) in
+  region_counter := !region_counter + 1;
+  while List.exists (fun (region, _) -> region = !new_region_name) current_memory do
+    new_region_name := "r" ^ string_of_int !region_counter;
+    region_counter := !region_counter + 1
+  done;
+  !new_region_name
 
 (** 
   Checks if a term is a value (cannot be reduced further).
@@ -216,9 +244,8 @@ let substitution (t1 : term) (t2 : term) (x : string) : term =
 *)
 let rec is_val (t : term) : bool =
   match t with
-  | Abs _ | Int _ -> true
+  | Abs _ | Int _ | Region _ | Unit -> true
   | List ts -> List.for_all is_val ts
-  | Deref _ | Ref _ | Assign _ -> true
   | _ -> false
 
 (**
@@ -249,7 +276,7 @@ let rec evaluate (t : term) : term option =
   in
 
   match t with
-  | Var _ | Abs _ | Int _ -> None
+  | Var _ | Abs _ | Int _ | Region _ | Unit -> None
 
   | App (m, n) ->
       if not (is_val m) then
@@ -396,7 +423,53 @@ let rec evaluate (t : term) : term option =
         (* t1 is a value, so we can reduce the let operation *)
         Some (substitution t2 t1 x)
 
-    | _ -> failwith "Evaluation not implemented for this term"
+    | Deref t ->
+      if not (is_val t) then
+        (* if t is not a value, try to reduce it *)
+        (match evaluate t with
+        | Some t' -> Some (Deref t')
+        | None -> None)
+      else
+        (* t is a value, so we can reduce the deref operation *)
+        (match t with
+        | Region r -> 
+            (match List.assoc_opt r !regions with
+            | Some value -> Some value
+            | None -> failwith ("Reference " ^ r ^ " not found in memory"))
+        | _ -> failwith "Deref operation applied to a non-reference value")
+
+    | Ref t ->
+      if not (is_val t) then
+        (* if t is not a value, try to reduce it *)
+        (match evaluate t with
+        | Some t' -> Some (Ref t')
+        | None -> None)
+      else
+        (* t is a value, so we can reduce the ref operation *)
+        let new_region_name = new_region !regions in
+        regions := (new_region_name, t) :: !regions;  (* add the new region to the memory *)
+        Some (Region new_region_name) (* return the new region *)
+    
+    | Assign (t1, t2) ->
+        if not (is_val t1) then
+          (* if t1 is not a value, try to reduce it *)
+          (match evaluate t1 with
+          | Some t1' -> Some (Assign(t1', t2))
+          | None -> None)
+        else if not (is_val t2) then
+          (* if t2 is not a value, try to reduce it *)
+          (match evaluate t2 with
+          | Some t2' -> Some (Assign(t1, t2'))
+          | None -> None)
+        else
+          (match t1 with
+          | Region r ->
+              (match List.assoc_opt r !regions with
+              | Some _ ->
+                  regions := (r, t2) :: List.remove_assoc r !regions;  (* update the value in the memory *)
+                  Some Unit  (* return unit to indicate successful assignment *)
+              | None -> failwith ("Reference " ^ r ^ " not found in memory"))
+          | _ -> failwith "Assign operation applied to a non-reference value")
 
 (**
   Prints successive reductions up to a normal form or the iteration limit.
@@ -405,8 +478,12 @@ let rec evaluate (t : term) : term option =
   @param max_iteration The maximum number of reductions to perform.
   @return [unit].
 *)
-let rec reduce (t : term) (max_iteration : int) = 
-  if max_iteration > 0 then
-    match evaluate t with
-    | Some t' -> pretty_printer t'; reduce t' (max_iteration - 1)
-    | None -> ()
+let reduce (t : term) (max_iteration : int) = 
+  regions := [];  (* Reset the memory before starting the reduction *)
+  let rec loop t max_iteration =
+    if max_iteration > 0 then
+      match evaluate t with
+      | Some t' -> pretty_printer t'; loop t' (max_iteration - 1)
+      | None -> ()
+    in
+  loop t max_iteration

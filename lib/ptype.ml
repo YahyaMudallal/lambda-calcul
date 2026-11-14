@@ -7,6 +7,8 @@ type ptype =
   | N
   | List of ptype
   | Forall of string * ptype
+  | Unit
+  | Ref of ptype
 
 (**
   Converts a type to a string.
@@ -25,6 +27,8 @@ let rec to_string_ptype (t : ptype) : string =
   | N -> "N"
   | List t' -> "List " ^ (to_string_ptype t')
   | Forall (x, t') -> "forall " ^ x ^ ". " ^ (to_string_ptype t')
+  | Unit -> "Unit"
+  | Ref t' -> "Ref " ^ (to_string_ptype t')
 
 (**
   Prints a type followed by a newline.
@@ -78,6 +82,8 @@ let rec free_type_vars (bound : string list) (t : ptype) : string list =
   | N -> []
   | List tl -> free_type_vars bound tl
   | Forall (x, body) -> free_type_vars (x :: bound) body
+  | Unit -> []
+  | Ref t' -> free_type_vars bound t'
 
 (** 
   Collects all free type variables in the typing environment.
@@ -122,6 +128,8 @@ let rec check_occur (v : string) (t : ptype) : bool =
   | List t' -> check_occur v t'
   | Forall (x, body) -> if x = v then false else check_occur v body
   | N -> false
+  | Unit -> false
+  | Ref t' -> check_occur v t'
 
 (**
   Replaces every occurrence of a type variable in a type.
@@ -136,12 +144,28 @@ let rec substitute_type (t1 : ptype) (v : string) (t2 : ptype) : ptype =
   | Arr (tg, td) -> 
       Arr(substitute_type tg v t2, substitute_type td v t2)
   | List tl -> List (substitute_type tl v t2)
+  | Ref tr -> Ref (substitute_type tr v t2)
   | Forall (x, body) ->
     if x = v then
       Forall (x, body)
     else
       Forall (x, substitute_type body v t2)
   | _ -> t1
+
+(**
+  Checks whether a term is syntactically non-expansive (cannot allocate
+  references during evaluation).
+  @param t The term to inspect.
+  @return [true] if [t] is non-expansive, [false] otherwise.
+*)
+let rec is_non_expansive (t : term) : bool =
+  match t with
+  | Var _ | Abs _ | Int _ | Unit | Region _ -> true
+  | List ts -> List.for_all is_non_expansive ts
+  | Cons (h, tl) -> is_non_expansive h && is_non_expansive tl
+  | Let (_, t1, t2) -> is_non_expansive t1 && is_non_expansive t2
+  | App _ | Add _ | Sub _ | Hd _ | Tl _ 
+  | Izte _ | Iete _ | Fix _ | Deref _ | Ref _ | Assign _ -> false
 
 let rec generate_equation_aux
     (t : term)
@@ -216,10 +240,38 @@ let rec generate_equation_aux
       let (ty_t1, subst_t1) = infer_term_type t1 env 1000 in
       (* update environment with new constraints *)
       let updated_env = apply_subst_env subst_t1 env in
-      (* generalize the type of t1 in the updated environment *)
-      let gen_ty = generalize_type ty_t1 updated_env in
+      (* generalize the type of t1 in the updated environment only if t1 is non-expansive *)
+      let gen_ty = 
+        if is_non_expansive t1 then 
+          generalize_type ty_t1 updated_env 
+        else 
+          ty_t1 
+      in
       (* type t2 in the updated environment *)
       generate_equation_aux t2 ((x, gen_ty) :: updated_env) tc
+
+  | Deref t_deref ->
+      let t_elem = Var (gen_new_type ()) in
+      let eqs_deref = generate_equation_aux t_deref env (Ref t_elem) in
+      (tc, t_elem) :: eqs_deref
+  
+  | Ref t_ref ->
+      let t_elem = Var (gen_new_type ()) in
+      let eqs_ref = generate_equation_aux t_ref env t_elem in
+      (tc, Ref t_elem) :: eqs_ref
+  
+  | Assign (t1, t2) ->
+      let t_elem = Var (gen_new_type ()) in
+      let eqs_t1 = generate_equation_aux t1 env (Ref t_elem) in
+      let eqs_t2 = generate_equation_aux t2 env t_elem in
+      (tc, Unit) :: (eqs_t1 @ eqs_t2)
+  
+  | Unit ->
+      [(tc, Unit)]
+  
+  | Region r ->
+      let t_elem = Var (gen_new_type ()) in
+      [(tc, Ref t_elem)]
 
 (**
   Generates the type equations for a term.
@@ -323,6 +375,10 @@ and unification_step
         | List t1_elem, List t2_elem ->
             None, (t1_elem, t2_elem) :: q
 
+        (* When both sides are ref types, equate their elements types *)
+        | Ref t1_elem, Ref t2_elem ->
+            None, (t1_elem, t2_elem) :: q
+
         | _ ->
             failwith ("Cannot unify " ^ to_string_ptype t1 ^ " with " ^ to_string_ptype t2)
 
@@ -362,7 +418,10 @@ and solve_system (eqs : equation list) (timeout : int) : (string * ptype) list =
 *)
 and infer_type (t : term) (timeout : int) : ptype =
   let (ty, _) = infer_term_type t [] timeout in
-  generalize_type ty []
+  if is_non_expansive t then
+    generalize_type ty []
+  else
+    ty
 
 (** Prints a list of type substitutions.
   @param subs The substitutions to print.
