@@ -379,7 +379,7 @@ let rec evaluate (t : term) : term option =
       if not (is_val t1) then
         (* if t1 not a value, try to reduce it *)
         (match evaluate t1 with
-        | Some t1' -> Some (Izte(t1, t2, t3))
+        | Some t1' -> Some (Izte(t1', t2, t3))
         | None -> None)
       else
         (* t1 is a value, we can reduce the izte operation *)
@@ -392,7 +392,7 @@ let rec evaluate (t : term) : term option =
       if not (is_val t1) then
         (* if t1 not a value, try to reduce it *)
         (match evaluate t1 with
-        | Some t1' -> Some (Iete(t1, t2, t3))
+        | Some t1' -> Some (Iete(t1', t2, t3))
         | None -> None)
       else
         (* t1 is a value, we can reduce the izte operation *)
